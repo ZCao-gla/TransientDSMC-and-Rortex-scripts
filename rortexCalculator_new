@@ -1,0 +1,222 @@
+#! /usr/bin/env python
+import sys
+import os
+from sympy import *
+import numpy as np
+from scipy.linalg import schur
+import math
+#-------------------------------------------------------------------
+'''
+Read Me
+What you need to change in the code is the file directories for reading and writing.
+They are all marked through '#<------' sign. You can search such character string to locate the 
+position you need to change.
+'''
+#-------------------------------------------------------------------
+def isNum(x):
+    try:
+        float(x)
+        return True
+    except ValueError:
+        return False
+#-------------------------------------------------------------------
+Mpath="/home/kevin/OpenFOAM/kevin-2.4.0-MNF/Kn0.025_Ma1.6_SWD_2000times/"
+AllfileName = os.listdir(Mpath)
+keyword = 'e-'
+timestepNamelist = []
+for fileNAME in AllfileName:
+    if fileNAME.find(keyword) != -1:
+        timestepNamelist.append(fileNAME)
+    elif isNum(fileNAME) == True and fileNAME != '0':
+        timestepNamelist.append(fileNAME)
+    else:
+        continue
+#-------------------------------------------------------------------
+for timestepNamelist_ in timestepNamelist:
+	'''
+	Read files
+	'''
+	velocityGradientFile = Mpath+timestepNamelist_+"/"+"dsmcgradUMean"#<------
+	with open(velocityGradientFile, 'r') as file_:
+	   Lines = file_.readlines()
+	'''
+	vorticity is obtained through utility "vorticity" for continuum solver or 'dsmcvorticity' for dsmc solver
+	'''
+	vorticity=Mpath+timestepNamelist_+"/"+"vorticity"#<------
+	with open(vorticity, 'r') as vorticity_:
+	    vor_Lines=vorticity_.readlines()
+	#copy a velocity gradient tensor list for writting rortex and shear vector data
+	with open(velocityGradientFile, 'r') as velocityGradientFile_shear_w:
+	    shear_vector_Lines=velocityGradientFile_shear_w.readlines()
+	with open(velocityGradientFile, 'r') as velocityGradientFile_rortex_w:
+	    rortex_Lines=velocityGradientFile_rortex_w.readlines()
+	#-------------------------------------------------------------------
+	#determine the number of cells, which is the number of lines of the tensor
+	NumOfCells=Lines[20].strip(" \n")
+	#print('NumOfCells=',NumOfCells)
+	NumOfCells=int(NumOfCells)
+	#print ("Number of cells is ", NumOfCells)
+	#-------------------------------------------------------------------
+	'''
+	loop in each point
+	'''
+        print("t="+timestepNamelist_)
+	for i in range(22,(22+NumOfCells)):
+	    # for i in range(len(Lines)):
+	    # print(Lines[i])
+	    '''
+	    datalist: the matrix of velocity gradient of each point
+	    vor_datalist: the vector of vorticity of each point
+	    '''
+	    #print("point now is ", i)
+	    gradientTensor_component = []
+	    datalist = Lines[i].strip("( )\n").split()
+	    for datalistitem in datalist:
+		# print('datalistitem=',datalistitem)
+		gradientTensor_component.append(float(datalistitem))
+	    vorticity_component = []
+	    vor_datalist = vor_Lines[i].strip("( )\n").split()
+	    # print('vor_datalist=',vor_datalist)
+	    for vor_datalistitem in vor_datalist:
+		# print('vor_datalistitem=', vor_datalistitem)
+		vorticity_component.append(float(vor_datalistitem))
+	    pdu_pdx = gradientTensor_component[0]
+	    pdu_pdy = gradientTensor_component[3]
+	    pdu_pdz = gradientTensor_component[6]
+	    pdv_pdx = gradientTensor_component[1]
+	    pdv_pdy = gradientTensor_component[4]
+	    pdv_pdz = gradientTensor_component[7]
+	    pdw_pdx = gradientTensor_component[2]
+	    pdw_pdy = gradientTensor_component[5]
+	    pdw_pdz = gradientTensor_component[8]
+	    X_vor = vorticity_component[0]
+	    Y_vor = vorticity_component[1]
+	    Z_vor = vorticity_component[2]
+	    nablav = np.array([[pdu_pdx, pdu_pdy, pdu_pdz], [pdv_pdx, pdv_pdy, pdv_pdz], [pdw_pdx, pdw_pdy, pdw_pdz]])
+	    # -------------------------------------------------------------------
+	    Schurdecomposition = schur(np.transpose(nablav), output='real')
+	    S=Schurdecomposition[0]
+            '''
+            here is an example of the output of S
+            the one below is the one with one real eigenvalue and two complex conjugate eigenvalues
+            [[ 123100.2854       41129.55771789       0.        ]
+ 	     [-545559.05938211  123100.2854           0.        ]
+             [      0.               0.               0.        ]]
+            the one below is the one with three real eigenvalues
+            [[ 90519.77442883 342935.36404         0.        ]
+             [     0.         -74688.98822883      0.        ]
+             [     0.              0.              0.        ]]
+
+            '''
+	    Qstar=Schurdecomposition[1]
+            #print('Qstar=',Qstar)
+            detQstar=np.linalg.det(Qstar)
+	    #print('detQstar=\n',detQstar)
+            '''
+            here is an example of the output of detQstar:
+            so we need to use function "round"
+            ('detQstar=\n', 0.9999999999999999)
+            ('detQstar=\n', 1.0)
+            ('detQstar=\n', 1.0000000000000002)
+            ('detQstar=\n', 1.0000000000000002)
+            ('detQstar=\n', 0.9999999999999998)
+            ('detQstar=\n', 1.0)
+            '''
+	    if round(detQstar)==1:
+		S = S
+                Q = np.transpose(Qstar)
+	    elif round(detQstar)==-1:
+		Ereverse=np.array([[1,0,0],[0,1,0],[0,0,-1]])
+		S = np.dot(np.dot(Ereverse, S),Ereverse)
+                Q = np.dot(Ereverse, np.transpose(Qstar))
+	    else:
+		print('Warning! The absolute value of the determinant of matrix Q is not 1!')
+		sys.exit(0)
+	    #print('S=\n',S)
+	    NABLAV = np.transpose(S)
+	    #print('NABLAV=\n', NABLAV)
+	    pdU_pdX = NABLAV[0][0]
+	    pdU_pdY = NABLAV[0][1]
+	    pdU_pdZ = NABLAV[0][2]
+	    pdV_pdX = NABLAV[1][0]
+	    pdV_pdY = NABLAV[1][1]
+	    pdV_pdZ = NABLAV[1][2]
+	    pdW_pdX = NABLAV[2][0]
+	    pdW_pdY = NABLAV[2][1]
+	    pdW_pdZ = NABLAV[2][2]
+	    # -------------------------------------------------------------------
+	    #Q=np.transpose(Qstar)
+	    r=np.dot(np.transpose(Q),np.array([[0],[0],[1]]))
+	    #print('r=\n',r)
+	    alpha = 0.5 * sqrt((pdU_pdX - pdV_pdY) ** 2 + (pdV_pdX + pdU_pdY) ** 2)
+	    #print('alpha=\n',alpha)
+	    beta = 0.5 * (pdV_pdX - pdU_pdY) #represents angular deformation speed difference
+	    #print('beta=\n',beta)
+	    if alpha**2-beta**2 < 0:
+		if beta > 0:
+		    R = beta-alpha
+		elif beta < 0:
+		    R = beta+alpha
+	    else:
+		R = 0
+	    # -------------------------------------------------------------------
+	    Rortex=2*R*r
+	    #print('Rortex=',Rortex)
+	    '''
+	    calculate shear vector component, S=curl(v)-R
+	    '''
+	    Sx=X_vor-Rortex[0][0]
+	    Sy=Y_vor-Rortex[1][0]
+	    Sz=Z_vor-Rortex[2][0]
+	    #-------------------------------------------------------------------
+            '''
+	    yita=Sx
+	    ksai=-Sy
+	    s=Sz
+	    lamda_cr=0.5*(pdU_pdX+pdV_pdY)
+	    lamda_r=pdW_pdZ
+	    #anti-symmetric shearing part
+	    AS=np.array([[0,-s/2,-ksai/2],[s/2,0,-yita/2],[ksai/2,yita/2,0]])
+	    #compression-strentching part
+	    CS=np.array([[lamda_cr,0,0],[0,lamda_cr,0],[0,0,lamda_r]])
+	    #symmetric deformation
+	    SD=np.array([[0,s/2,ksai/2],[s/2,0,yita/2],[ksai/2,yita/2,0]])
+	    #referenced fropm "Rortex based velocity gradient tensor decomposition"
+            '''
+	    # -------------------------------------------------------------------
+	    '''
+	    we used readlines() to input two lists before. The new vectors will replace the coordinate inside the lists.
+	    '''
+	    rortex_Lines[i]='(' + str(Rortex[0][0]) + ' ' + str(Rortex[1][0]) + ' ' + str(Rortex[2][0]) + ')' + "\n"
+	    #print('rortex_Lines[i]=',rortex_Lines[i])
+	    shear_vector_Lines[i]='(' + str(Sx) + ' ' + str(Sy) + ' ' + str(Sz) + ')' + "\n"
+	    #print('shear_vector_Lines[i]=',shear_vector_Lines[i])
+	    #print("###################Next point###################")
+	    # --------------------End of Iteration---------------------
+	'''
+	i)Replace string 'vorticity' into 'Rortex'
+	ii)replace lines in 'rortex_Lines' into 'Rortex' result
+	iii)the same to shear vector part
+	'''
+	rortex_Lines[11]=rortex_Lines[11].replace('volTensorField','volVectorField')
+	rortex_Lines[13]=rortex_Lines[13].replace('dsmcgradUMean','Rortex')
+	rortex_Lines[19]=rortex_Lines[19].replace('tensor','vector')
+	#print('rortex_Lines[13]=',rortex_Lines[13])
+	#print('rortex_Lines[13]=',rortex_Lines[13])
+        shear_vector_Lines[11]=shear_vector_Lines[11].replace('volTensorField','volVectorField')
+	shear_vector_Lines[13]=shear_vector_Lines[13].replace('dsmcgradUMean','shear vector')
+	shear_vector_Lines[19]=shear_vector_Lines[19].replace('tensor','vector')
+	#print('shear_vector_Lines[13]=',shear_vector_Lines[13])
+	#-------------------------------------------------------------------
+	'''
+	create two data files and write data
+	'''
+	Rortexpath=Mpath+timestepNamelist_+"/"+"Rortex"#<------
+	shear_vector_path=Mpath+timestepNamelist_+"/"+"Shear_vector"#<------
+	Rortex = open(Rortexpath,'w')
+	Rortex.writelines(rortex_Lines)
+	Rortex.close()
+	shear = open(shear_vector_path,'w')
+	shear.writelines(shear_vector_Lines)
+	shear.close()
+	print('Done')
