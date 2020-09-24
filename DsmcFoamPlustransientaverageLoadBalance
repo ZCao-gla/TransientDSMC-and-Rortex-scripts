@@ -1,0 +1,808 @@
+#! /usr/bin/env python
+import os
+import shutil
+import sys
+#from os import listdir
+import time
+import logging
+
+'''
+Code written by 
+Ziqu Cao
+Ph.D Student
+Aerospace Engineering
+University of Glasgow
+'''
+
+'''
+ALOGRITHM
+1. Set up the simulation with the relevant write intervals and end time.
+2. Run the first simulation.
+3. Copy the relevant macroscopic properties to new files that will be used over the entire ensemble run.
+4. Delete the new saved time steps.
+5. Run the simulation again.
+6. Add the new macroscopic properties to the ones saved from previous timesteps.
+7. Repeat steps 4, 5, 6 for X ensembles.
+8. Divide the summed macroscopic properties by the number of ensembles.
+'''
+'''
+User Instruction
+Find the user define part below and modified this part.
+Update log
+2020/5/5
+It has been found that when the number of patches of a surface is lower than 10, the scalar or vector data will be written into one line by OpenFOAM.
+In such curcumstances, the loadData function won't work correctly.
+Therefore, we import a dataFormatCheck function to check the data format and if the unwanted situation occurs, this function will force the data to be
+rewritten to the correct way.
+
+2020/5/16
+To avoid failure of caluclation due to the intruptions by some special circumstances, such as system-halted or power-off. 
+Two variables, CalFromBeginning and NumOfCompletion, are imported to control whether the user want to restart or continue the calculation 
+
+2020/6/9
+If two or more computers running the same case respectively, they can be considered as individual samples and can be combined together.
+Here "JustSuperposition" variable is imported to control such ability
+The data calculated by another computer must be kept in the directory in "FirstCalculation" folder.
+'''
+
+
+###################################################################################
+################################Class DEFINE####################################
+###################################################################################
+# -------------------------------------------------------------------
+class FileManipulation():
+    def dataFormatCheck(self,fileName, boundaryNamelist,printcheck=False):
+        global _isvector
+        global _isscalar
+        global DatalineIndex
+        DatalineIndex = [0] * (2 * (len(boundaryNamelist) + 1))
+        # print(DatalineIndex)
+        with open(fileName, 'r') as file:  # open files
+            line = file.readlines()
+        # to find the number of line where the <internalField> data starts and ends
+        loaddatafor1count = 0
+        if line[11].find('Scalar') != -1:
+            _isvector = 0
+            _isscalar = 1
+        elif line[11].find('Vector') != -1:
+            _isvector = 1
+            _isscalar = 0
+        else:
+            print('Error:Undetermined file category!')
+        for _line in line:
+            # to find the number of line where the <boundary> data starts and ends
+            for name in boundaryNamelist:
+                if _line.find(name) != -1 and _line.find("type") == -1:
+                    if line[loaddatafor1count + 3].find('List<') != -1:#line need to process if format is not right
+                        boundarypatchnum = line[loaddatafor1count + 4]
+                        if isNum(boundarypatchnum)==False and _isvector == 1: #vector
+                            #print('The format of data of '+name+' is incorrect!')
+                            #print('Processing!')
+                            lineReplacement = []
+                            A=line[loaddatafor1count + 3]
+                            A = A.split('>', 1)
+                            lineReplacement.append(A[0] + '>' + '\n')
+                            A.pop(0)
+                            A = A[0]
+                            A = A.split('(', 1)
+                            A[0] = A[0].split()
+                            boundarypatchnum = int(float(A[0][0]))
+                            lineReplacement.append(A[0][0] + '\n')
+                            lineReplacement.append('(' + '\n')
+                            A = A[1]
+                            A = A.split(') ')
+                            for boundarypatchnum_reweite_count in range(boundarypatchnum - 1):
+                                lineReplacement.append(A[boundarypatchnum_reweite_count] + ')' + '\n')
+                            A = A[-1]
+                            A = A.split(')')
+                            lineReplacement.append(A[0] + ')' + '\n')
+                            lineReplacement.append(')' + '\n')
+                            lineReplacement.append(';' + '\n')
+                            #rearrange data
+                            line.pop((loaddatafor1count + 3))
+                            for i in range((loaddatafor1count + 3), (loaddatafor1count + 3 + boundarypatchnum+5)):
+                                line.insert(i, lineReplacement[i - (loaddatafor1count + 3)])
+                            lineRewrite = open(fileName, "w")
+                            lineRewrite.writelines(line)
+                        elif isNum(boundarypatchnum)==False and _isscalar == 1: #scalar
+                            #print('The format of data of '+name+' is incorrect!')
+                            #print('Processing!')
+                            lineReplacement = []
+                            A=line[loaddatafor1count + 3]
+                            A = A.split('>', 1)
+                            lineReplacement.append(A[0] + '>' + '\n')
+                            A.pop(0)
+                            A = A[0]
+                            A = A.split('(', 1)
+                            A[0] = A[0].split()
+                            boundarypatchnum = int(float(A[0][0]))
+                            lineReplacement.append(A[0][0] + '\n')
+                            lineReplacement.append('(' + '\n')
+                            A = A[1]
+                            A = A.split()
+                            for boundarypatchnum_reweite_count in range(boundarypatchnum - 1):
+                                lineReplacement.append(A[boundarypatchnum_reweite_count] + '\n')
+                            A = A[-1]
+                            A = A.split(')')
+                            lineReplacement.append(A[0] + '\n')
+                            lineReplacement.append(')' + '\n')
+                            lineReplacement.append(';' + '\n')
+                            #rearrange data
+                            line.pop((loaddatafor1count + 3))
+                            for i in range((loaddatafor1count + 3), (loaddatafor1count + 3 + boundarypatchnum+5)):
+                                line.insert(i, lineReplacement[i - (loaddatafor1count + 3)])
+                            lineRewrite = open(fileName, "w")
+                            lineRewrite.writelines(line)
+            loaddatafor1count += 1
+        if printcheck == True:
+            print('File check OK!')
+
+#-----------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------
+    # read data function
+    def loadData(self,fileName, boundaryNamelist,SumRecover=False,ExternalNumOfCompletion=0):
+        global _isvector
+        global _isscalar
+        global NumOfCompletion
+        '''
+        The data we need to extract is always highlighted by the key word like 'internalField' and other boundary names.
+        Another key word is 'List'.
+        Therefore, we use these key words to find the line index of the data.
+        The DatalineIndex is splited into two kinds of conditions:1.one data list 2.multidata lists
+        pop() is used to delete pairs of position in DatalineIndex, so the length of DatalineIndex is variable.
+        '''
+        global DatalineIndex
+    #-----------------------------------------------------------------------------------------------
+        self.dataFormatCheck(fileName, boundaryNamelist)
+        '''
+        check Data format before load data and calculation. It has been found when the patch number of a boundary is small,
+        the data(vector and scalar value) will be written in one line. So we have to split it and rewrite it into the format 
+        that "loadData" function can correctly run.
+        '''
+    #-----------------------------------------------------------------------------------------------
+        DatalineIndex = [0] * (2 * (len(boundaryNamelist) + 1))
+        # print(DatalineIndex)
+        with open(fileName, 'r') as file:  # open files
+            line = file.readlines()
+        # to find the number of line where the <internalField> data starts and ends
+        loaddatafor1count = 0
+        fromNum = 0
+        if line[11].find('Scalar') != -1:
+            _isvector = 0
+            _isscalar = 1
+        elif line[11].find('Vector') != -1:
+            _isvector = 1
+            _isscalar = 0
+        else:
+            print('Error:Undetermined file category!')
+            sys.exit(0)
+        for _line in line:
+            if _line.find('internalField') != -1:
+                if _line.find('List<') != -1:
+                    DatalineIndex[0] = loaddatafor1count + 3
+                    internalfieldpatchnum = line[loaddatafor1count + 1]
+                    internalfieldpatchnum = internalfieldpatchnum.strip(" \n")
+                    internalfieldpatchnum = int(float(internalfieldpatchnum))
+                    DatalineIndex[1] = DatalineIndex[0] + internalfieldpatchnum
+                    fromNum = 2
+                else:
+                    DatalineIndex.pop()
+                    DatalineIndex.pop()
+            # to find the number of line where the <boundary> data starts and ends
+            for name in boundaryNamelist:
+                if _line.find(name) != -1 and _line.find("type") == -1:
+                    # print("_line =")
+                    # print(_line)
+                    if line[loaddatafor1count + 3].find('List<') != -1:
+                        # print("Execute 01")
+                        # print("name = ")
+                        # print(name)
+                        boundarypatchnum = line[loaddatafor1count + 4]
+                        boundarypatchnum = boundarypatchnum.strip(" \n")
+                        boundarypatchnum = int(float(boundarypatchnum))
+                        DatalineIndex[fromNum] = loaddatafor1count + 6
+                        DatalineIndex[fromNum + 1] = DatalineIndex[fromNum] + boundarypatchnum
+                        fromNum += 2
+                        # print(fromNum)
+                        # print(DatalineIndex)
+                    else:
+                        # print("Execute pop")
+                        DatalineIndex.pop()
+                        DatalineIndex.pop()
+            loaddatafor1count += 1
+        # print(DatalineIndex)
+        # create a list of lists for saving data of different boundaries
+        '''
+        After gathering the line indexes, we need to extract the number of the data.
+        '''
+        if len(DatalineIndex) / 2 > 1:
+            dataSet = []
+            for m in range(len(DatalineIndex) / 2):
+                dataSetcell = []
+                dataSet.append(dataSetcell)
+            if _isvector == 1:
+                loaddatafor2count = 0
+                for loaddatafor2count in range(len(DatalineIndex) / 2):
+                    for i in range(DatalineIndex[2 * loaddatafor2count], DatalineIndex[2 * loaddatafor2count + 1]):
+                        # the number is to define the exact position of the value we want to change
+                        curline3 = line[i]
+                        curline1 = list(curline3.strip("(\n)").split())
+                        fltline = map(float, list(curline1))  # turn the value from string to float so we can calculate it
+                        if SumRecover == True:
+                            if ExternalNumOfCompletion==0:
+                                '''
+                                if ExternalNumOfCompletion is specified to be nonzero value, it means the user want to recover
+                                the summation calculated by another computer.
+                                '''
+                                NumOfCompletionList=[NumOfCompletion]*3#make it a list for iterable
+                                fltline = map(lambda ListX,NumY: ListX*NumY, fltline, NumOfCompletionList)
+                                dataSet[loaddatafor2count] += fltline
+                            elif ExternalNumOfCompletion>0:
+                                NumOfCompletionList=[ExternalNumOfCompletion]*3#make it a list for iterable
+                                fltline = map(lambda ListX,NumY: ListX*NumY, fltline, NumOfCompletionList)
+                                dataSet[loaddatafor2count] += fltline
+                        elif SumRecover == False:
+                            dataSet[loaddatafor2count] += fltline
+                        else:
+                            print("Fatal Error! SumRecover is not a bool variable!")
+                            sys.exit(0)
+                return dataSet
+            elif _isscalar == 1:  # means if word 'scalar' is found
+                loaddatafor2count = 0
+                for loaddatafor2count in range(len(DatalineIndex) / 2):
+                    for i in range(DatalineIndex[2 * loaddatafor2count], DatalineIndex[2 * loaddatafor2count + 1]):
+                        # the number is to define the exact position of the value we want to change
+                        curline3 = line[i]
+                        curline3 = curline3.strip("\n")
+                        if SumRecover == True:
+                            if ExternalNumOfCompletion==0:
+                                dataSet[loaddatafor2count].append(float(curline3)*NumOfCompletion)
+                            elif ExternalNumOfCompletion>0:
+                                dataSet[loaddatafor2count].append(float(curline3)*ExternalNumOfCompletion)
+                        elif SumRecover == False:
+                            dataSet[loaddatafor2count].append(float(curline3))
+                        else:
+                            print("Fatal Error! SumRecover is not a bool variable!")
+                            sys.exit(0)
+                return dataSet
+            else:
+                print('Fatal Error! Can not judge whether the file is in vector format or scalar format!')
+                print('Exit!')
+                sys.exit(0)
+    
+        if len(DatalineIndex) / 2 == 1:
+            dataSet = []
+            if _isvector == 1:
+                for i in range(DatalineIndex[0], DatalineIndex[1]):
+                    # the number is to define the exact position of the value we want to change
+                    curline3 = line[i]
+                    curline1 = list(curline3.strip("(\n)").split())
+                    fltline = map(float, list(curline1))  # turn the value from string to float so we can calculate it
+                    if SumRecover == True:
+                        if ExternalNumOfCompletion==0:
+                            NumOfCompletionList=[NumOfCompletion]*3
+                            fltline = map(lambda ListX,NumY: ListX*NumY, fltline, NumOfCompletionList)
+                            dataSet += fltline
+                        elif ExternalNumOfCompletion>0:
+                            NumOfCompletionList=[ExternalNumOfCompletion]*3
+                            fltline = map(lambda ListX,NumY: ListX*NumY, fltline, NumOfCompletionList)
+                            dataSet += fltline                        
+                    elif SumRecover == False:
+                        dataSet += fltline
+                    else:
+                        print("Fatal Error! SumRecover is not a bool variable!")
+                        sys.exit(0)
+                return dataSet
+            elif _isscalar == 1:  # means if word 'scalar' is found
+                for i in range(DatalineIndex[0], DatalineIndex[1]):
+                    # the number is to define the exact position of the value we want to change
+                    curline3 = line[i]
+                    curline3 = curline3.strip("\n")
+                    if SumRecover == True:
+                        if ExternalNumOfCompletion==0:
+                            dataSet.append(float(curline3)*NumOfCompletion)
+                        elif ExternalNumOfCompletion>0:
+                            dataSet.append(float(curline3)*ExternalNumOfCompletion)
+                    elif SumRecover == False:
+                        dataSet.append(float(curline3))
+                    else:
+                        print("Fatal Error! SumRecover is not a bool variable!")
+                        sys.exit(0)
+                return dataSet
+            else:
+                print('Fatal Error! Can not judge whether the file is in vector format or scalar format!')
+                print('Exit!')
+                sys.exit(0)
+
+
+# -------------------------------------------------------------------
+# do sum calculation for each cell in the list
+    def superposition(self,fun1, fun2):
+        global DatalineIndex
+        if len(DatalineIndex) / 2 > 1:
+            superpositionresult = []
+            for m in range(len(fun1)):
+                superpositionresultcell = []
+                superpositionresult.append(superpositionresultcell)
+            for n in range(len(fun1)):
+                combination = zip(fun1[n], fun2[n])
+                for a, b in combination:
+                    superpositionresult[n].append(a + b)
+            return superpositionresult
+        if len(DatalineIndex) / 2 == 1:
+            combination = zip(fun1, fun2)
+            superpositionresult = []
+            for fun1, fun2 in combination:
+                superpositionresult.append(fun1 + fun2)
+            return superpositionresult
+
+
+# -------------------------------------------------------------------
+# "resultlist" comes from function sum 
+# "destination" is the file you want to edit
+    def rewritedata(self,destinationfile, resultlist):
+        # The code below is used to copy the sum result into a buffer file as coordinates
+        global _isvector
+        global _isscalar
+        global DatalineIndex
+        # if DatalineIndex's length is over 1, a list of lists is generated for save data of different positions.
+        if (len(DatalineIndex) / 2) > 1:
+            newresultlist = []
+            for m in range(len(resultlist)):
+                newresultlistcell = []
+                newresultlist.append(newresultlistcell)
+            # trun float to string and arrange the data into vector or scalar format
+            if _isvector == 1:
+                # print('execute 1-1')
+                for i in range(len(resultlist)):
+                    for cellindex in range(len(resultlist[i]) / 3):
+                        newresultlist[i].append('(' + str(resultlist[i][3 * cellindex]) + ' ' + str(
+                            resultlist[i][3 * cellindex + 1]) + ' ' + str(resultlist[i][3 * cellindex + 2]) + ')' + "\n")
+            if _isscalar == 1:
+                # print('execute 1-2')
+                for i in range(len(resultlist)):
+                    for cell in resultlist[i]:
+                        newresultlist[i].append(str(cell) + "\n")
+        # if DatalineIndex's length is 1, just a list is generated and data is assigned into it simply.
+        if (len(DatalineIndex) / 2) == 1:
+            newresultlist = []
+            if _isvector == 1:
+                # print('execute 2-1')
+                for cellindex in range(len(resultlist) / 3):
+                    newresultlist.append(
+                        '(' + str(resultlist[3 * cellindex]) + ' ' + str(resultlist[3 * cellindex + 1]) + ' ' + str(
+                            resultlist[3 * cellindex + 2]) + ')' + "\n")
+            if _isscalar == 1:
+                # print('execute 2-2')
+                for cell in resultlist:
+                    newresultlist.append(str(cell) + "\n")
+    
+        with open(destinationfile, 'r') as destinationfile_:
+            Lines = destinationfile_.readlines()
+        # devide 2 because len(newresultlist)=len(boundaryNamelist) + 1
+        if (len(DatalineIndex) / 2) > 1:
+            # print('execute 3-1')
+            for n_ in range(len(DatalineIndex) / 2):
+                for _i in range(DatalineIndex[2 * n_], DatalineIndex[2 * n_ + 1]):
+                    # assign data to the cooresponding position in the destination file
+                    Lines[_i] = newresultlist[n_][_i - DatalineIndex[2 * n_]]
+        if (len(DatalineIndex) / 2) == 1:
+            # print('execute 3-2')
+            for _i in range(DatalineIndex[0], DatalineIndex[1]):
+                # assign data to the cooresponding position in the destination file
+                Lines[_i] = newresultlist[_i - DatalineIndex[0]]
+        # rewrite the file
+        destination = open(destinationfile, "w")
+        destination.writelines(Lines)
+        destination.close()
+
+
+# -------------------------------------------------------------------
+# calculate average macroscopic peoperties
+    def averagedata(self,number_of_calculations, value):
+        global DatalineIndex
+        if len(DatalineIndex) / 2 > 1:
+            length = len(value)
+            averagedvalue = []
+            for m in range(length):
+                averagedvaluecell = []
+                averagedvalue.append(averagedvaluecell)
+            for i_averagedata in range(length):
+                for cell in value[i_averagedata]:
+                    cell = cell / number_of_calculations
+                    # print(cell)
+                    averagedvalue[i_averagedata].append(cell)
+            return averagedvalue
+        if len(DatalineIndex) / 2 == 1:
+            averagedvalue = []
+            for i_averagedata in range(len(value)):
+                averagedvalue.append(value[i_averagedata] / number_of_calculations)
+            return averagedvalue
+
+
+# -------------------------------------------------------------------
+# clean the case
+    def cleancase(self,directory):
+        directoryReserved = ['system', 'constant', 'log', 'DsmcFoamPlustransientaverage', 'postProcessing', 'FirstCalculation','loadbalance','.log','boundary','.msh']
+        for dirName in os.listdir(directory):
+            i = 0
+            ii = 0
+            while i < len(directoryReserved):
+                if dirName.find(directoryReserved[i]) == -1:
+                    i += 1
+                else:
+                    ii = 1
+                    break
+            if ii == 0:
+                os.system("rm -r " + dirName)
+        for constantfile in os.listdir(directory + 'constant/polyMesh/'):
+            if constantfile.find('blockMeshDict') == -1:
+                os.system('rm -r ' + directory + 'constant/polyMesh/' + constantfile)
+#-------------------------------------------------------------------------
+###################################################################################
+class MacroProperties:
+    def __init__(self, gastype):
+        Namelist_raw = ['p','overallT','UMean','rhoM']
+        self.listOutput =[]
+        self.gastype=str(gastype)
+        for i in Namelist_raw:
+            self.listOutput.append(i+'_'+gastype)
+###################################################################################
+################################FUNCTION DEFINE####################################
+###################################################################################
+#function to check if the string is a number
+def isNum(x):
+    try:
+        float(x)
+        return True
+    except ValueError:
+        return False
+
+# -------------------------------------------------------------------
+###################################################################################
+################################EXECUTION PART#####################################
+###################################################################################
+print("###################################################################################")
+print("###############################Start Simulation####################################")
+print("###################################################################################")
+logging.basicConfig(filename="time.log",level=logging.INFO)
+starttime=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+# some print commmands are used for debugging.
+# ------------------------------------------------------------------------------
+######################BEGINNING OF USER DEFINE PART###############################
+# ------------------------------------------------------------------------------
+caseName = "Kn0.025_Ma1.6_SWD_2000times/" #keep the "/" here
+gastype='N2'
+# ------------------------------------------------------------------------------
+#the working directory
+Mpath = "/home/kevin/OpenFOAM/kevin-2.4.0-MNF/"#keep the "/" here
+#the directory where new data computed by another computer is saved
+ExternalDataPath = "/home/kevin/OpenFOAM/kevin-2.4.0-MNF/Kn0.025_Ma1.6_SWD/"#keep the "/" here
+# ------------------------------------------------------------------------------
+# Important! number of calculations needed.
+number_of_calculations = 5
+#How many times it has been calculated?
+NumOfCompletion = 2000
+#Is the calculation interupted?
+# ------------------------------------------------------------------------------
+CalInteruption = False
+#CalInteruption = True
+# ------------------------------------------------------------------------------
+#Just do superposition for two individual data? If this number is nonzero, then number_of_calculations will not work, you can leave it with any number you want.
+ExternalNumOfCompletion=0
+# ------------------------------------------------------------------------------
+###########################END OF USER DEFINE PART###############################
+# ------------------------------------------------------------------------------
+blockMeshfilepath = "constant/polyMesh/blockMeshDict"
+controlDictpath = 'system/controlDict'
+# the case path
+casepath = Mpath + caseName
+Firstcalculationpath = casepath + 'FirstCalculation/'
+# check: start the calculation from the beginning? 
+if NumOfCompletion > 0:
+    CalFromBeginning = False
+elif NumOfCompletion == 0:
+    CalFromBeginning = True
+else:
+    print("Error! Illegal value of NumOfCompletion has been detected!")
+    sys.exit(0)
+# ------------------------------------------------------------------------------
+if ExternalNumOfCompletion==0:
+    JustSuperposition = False
+elif ExternalNumOfCompletion>0:
+    JustSuperposition = True
+else:
+    print("Error! Illegal value of ExternalNumOfCompletion has been detected!")
+    sys.exit(0)
+# ------------------------------------------------------------------------------
+ExternalFirstcalculationpath = ExternalDataPath + 'FirstCalculation/'
+#the number of completion in computer starts from 0
+#######################initialization of class##################################
+# The list of the names of generated macroscopic properties
+MacroPropertiesNameList=MacroProperties(gastype)#<----- instance of class MacroProperties
+FileManipulation=FileManipulation()#<----- instance of class FileManipulation
+# ------------------------------------------------------------------------------
+if JustSuperposition == False: 
+    with open(controlDictpath, 'r') as controlDictlines:
+        controlDictlines_ = controlDictlines.readlines()
+    for _controlDictline in controlDictlines_:
+        if _controlDictline.find('endTime') == 0:
+            _controlDictline_ = _controlDictline.strip(' ;\n').split()
+            #print(_controlDictline_)
+            timestepEnd = str(_controlDictline_[1])
+    print('timestepEnd=',timestepEnd)
+    # ------------------------------------------------------------------------------
+    # get boundary name list
+    with open(casepath + blockMeshfilepath, 'r') as boundarynamefile:
+        blockMeshline = boundarynamefile.readlines()
+    boundaryNamelist = []
+    _blockMeshline_counter = 0
+    for _blockMeshline in blockMeshline:
+        # if the boundary type is empty, we just neglect it because there wont be any data in the result named in this boundary type.
+        if _blockMeshline.find("type") != -1 and _blockMeshline.find("empty") == -1:
+            _blockMeshline_ = blockMeshline[_blockMeshline_counter - 2]
+            # get rid of useless strings like empty space string and \n
+            _blockMeshline_ = _blockMeshline_.strip(" \n")
+            boundaryNamelist.append(_blockMeshline_)
+            _blockMeshline_counter += 1
+        else:
+            _blockMeshline_counter += 1
+    # ------------------------------------------------------------------------------
+    # Protection of simulaton in case of repeated string in boundary name
+    for BNLCount in range(len(boundaryNamelist) - 1):  # BNL=boundary name list
+        _BNLCount = BNLCount
+        while _BNLCount < (len(boundaryNamelist) - 1):
+            if boundaryNamelist[_BNLCount + 1].find(boundaryNamelist[BNLCount]) != -1:
+                print("###################################################################################")
+                print("Error: String in Boundary Name is repeated! This will collapse the Calculation! Please Re-name the boundary!")
+                print("###################################################################################")
+                sys.exit(0)
+            _BNLCount += 1
+    # ------------------------------------------------------------------------------
+    if CalFromBeginning == True:
+        for dirName in os.listdir(casepath):
+            if dirName.find('constant') != -1:
+                continue
+            elif dirName.find('system') != -1:
+                continue
+            elif dirName.find('DsmcFoamPlustransientaverage') != -1:
+                continue
+            elif dirName.find('loadbalance') != -1:
+                continue
+            elif dirName.find('.log') !=-1:
+                continue
+            elif dirName.find('boundary') !=-1:
+                continue
+            elif dirName.find('.msh') !=-1:
+                continue
+            else:
+                os.system("rm -r " + dirName)
+        for constantfile_ in os.listdir(casepath + 'constant/polyMesh/'):
+            if constantfile_.find('blockMeshDict') == -1:
+                os.system('rm -r ' + casepath + 'constant/polyMesh/' + constantfile_)
+    elif CalFromBeginning == False:
+        for dirName in os.listdir(casepath):
+            if dirName.find('constant') != -1:
+                continue
+            elif dirName.find('system') != -1:
+                continue
+            elif dirName.find('DsmcFoamPlustransientaverage') != -1:
+                continue
+            elif dirName.find('FirstCalculation') != -1: #here is the difference
+                continue
+            elif dirName.find('loadbalance') != -1:
+                continue
+            elif dirName.find('.log') !=-1:
+                continue
+            elif dirName.find('boundary') !=-1:
+                continue
+            elif dirName.find('.msh') !=-1:
+                continue
+            else:
+                os.system("rm -r " + dirName)
+        for constantfile_ in os.listdir(casepath + 'constant/polyMesh/'):
+            if constantfile_.find('blockMeshDict') == -1:
+                os.system('rm -r ' + casepath + 'constant/polyMesh/' + constantfile_)
+    # clear all the rubbish files
+    # ------------------------------------------------------------------------------
+    if CalFromBeginning == True:
+        print('##########The number of loop calculations is: %d#############' % (number_of_calculations))
+        # ------------------------------------------------------------------------------
+        for _number_of_calculations in range(number_of_calculations):
+            #print('Preparing!')
+            #time.sleep(1)
+            # remove unnecessary log files
+            if _number_of_calculations > 0:
+                os.system("rm log.%d" % (_number_of_calculations - 1))
+            print('#####################Processsing the %d time(s) Calculation#####################' % (
+                        _number_of_calculations + 1))
+            os.system("./loadbalance > log.%d" % (_number_of_calculations))
+    # ----------------------------------------------------------------------------
+            # superposition of data
+            #time.sleep(1)
+            if _number_of_calculations != 0:
+                print('----------PROCESSING SUPERPOSITION!----------')
+                for _timestep_ in timestepNamelist: #error reported here can be ignored
+                    #print(_timestep_)
+                    for _macrofile in MacroPropertiesNameList.listOutput:
+                        _isvector = 0
+                        _isscalar = 0
+                        #print(_macrofile)
+                        superpositionfun1 = FileManipulation.loadData(casepath + _timestep_ + "/" + _macrofile, boundaryNamelist)
+                        superpositionfun2 = FileManipulation.loadData(Firstcalculationpath + _timestep_ + "/" + _macrofile, boundaryNamelist)
+                        _superposition = FileManipulation.superposition(superpositionfun1, superpositionfun2)
+                        FileManipulation.rewritedata(Firstcalculationpath + _timestep_ + "/" + _macrofile, _superposition)
+                        superpositionfun1 = 0
+                        superpositionfun2 = 0
+                        _superposition = 0
+                print('----------SUPERPOSITION DONE!----------')
+                if _number_of_calculations < (number_of_calculations - 1):
+                    FileManipulation.cleancase(casepath)
+                # break
+            else:
+                ################################################################################
+                ################### manipulation of first calculation###########################
+                ################################################################################
+                if os.path.isdir(Firstcalculationpath) == False:
+                    os.mkdir(Firstcalculationpath)
+                    print('Make Firstcalculation Folder')
+                # If the folder exsists, it means it is a FistCalculation folder of a former case or something useless,
+                # so delete it and remake a new folder
+                else:
+                    print('remake Firstcalculation Folder ')
+                    shutil.rmtree(Firstcalculationpath)
+                    os.mkdir(Firstcalculationpath)
+                # To get the time step folder list
+                # ------------------------------------------------------------------------------
+                # the folders list in the case folder
+                AllfileName = os.listdir(casepath)
+                keyword = 'e-'
+                timestepNamelist = []
+                for fileNAME in AllfileName:
+                    if fileNAME.find(keyword) != -1:
+                        timestepNamelist.append(fileNAME)
+                    elif isNum(fileNAME) == True and fileNAME != '0':
+                        timestepNamelist.append(fileNAME)
+                    else:
+                        continue
+                #print("timestepNamelist=")
+                #print(timestepNamelist)
+                # after the for loop above, a 'timestepNamelist' list is created
+                # ------------------------------------------------------------------------------
+                # copy result into FirstCalculation directory, new is the time-step directory of first calculation
+                for timestep in timestepNamelist:
+                    shutil.move(casepath + timestep, Firstcalculationpath)
+                print('All files have been moved!')
+                FileManipulation.cleancase(casepath)
+                ################################################################################
+                ################### End of manipulation of first calculation####################
+                ################################################################################
+        # ------------------------------------------------------------------------------
+        # The final manipulation
+        for _timestep_ in timestepNamelist:
+            for _macrofile in MacroPropertiesNameList.listOutput:
+                # read the final data in Firstcalculation folder
+                #print(_macrofile)
+                _averagevalue = FileManipulation.loadData(Firstcalculationpath + _timestep_ + "/" + _macrofile, boundaryNamelist)
+                average = FileManipulation.averagedata(number_of_calculations, _averagevalue)
+                #print('#####################Averaging Complete#####################')
+                # rewrite it into the file
+                FileManipulation.rewritedata(Firstcalculationpath + _timestep_ + "/" + _macrofile, average)
+        print('#####################Rewriting Data Complete#####################')
+        FileManipulation.cleancase(casepath)
+        print("#####################Calculations All Complete#####################")
+        # ------------------------------------------------------------------------------
+    else:
+        print('##########Continue the Calculation! The number of loop calculations is: %d#############' % (number_of_calculations))
+        #check the time step name list and macroscopic properties name list
+        # the folders list in the case folder
+        timestepNamelist=[]
+        timestepNamelist = os.listdir(Firstcalculationpath)
+        #print("timestepNamelist=")
+        #print(timestepNamelist)
+        # a 'timestepNamelist' list is created
+        # ------------------------------------------------------------------------------
+        #remove unnecessary log files
+        for _number_of_calculations in range(number_of_calculations):
+            #print('Preparing!')
+            #time.sleep(1)
+            # remove unnecessary log files
+            if _number_of_calculations > 0:
+                os.system("rm log.%d" % (_number_of_calculations + NumOfCompletion-1))
+            print('#####################Processsing the %d time(s) Calculation#####################' % (_number_of_calculations+ NumOfCompletion + 1))
+            os.system("./loadbalance > log.%d" % (_number_of_calculations+NumOfCompletion))
+            # superposition of data
+            #time.sleep(1)
+            print('----------PROCESSING SUPERPOSITION!----------')
+            for _timestep_ in timestepNamelist:
+                #print(_timestep_)
+                for _macrofile in MacroPropertiesNameList.listOutput:
+                    _isvector = 0
+                    _isscalar = 0
+                    #print(_macrofile)
+                    superpositionfun1 = FileManipulation.loadData(casepath + _timestep_ + "/" + _macrofile, boundaryNamelist)
+                    # ------------------------------------------------------------------------------
+                    #recover the superposition
+                    if _number_of_calculations == 0 and CalInteruption == False:
+                        superpositionfun2 = FileManipulation.loadData(Firstcalculationpath + _timestep_ + "/" + _macrofile, boundaryNamelist,True)
+                    else:
+                        superpositionfun2 = FileManipulation.loadData(Firstcalculationpath + _timestep_ + "/" + _macrofile, boundaryNamelist)
+                    # ------------------------------------------------------------------------------
+                    _superposition = FileManipulation.superposition(superpositionfun1, superpositionfun2)
+                    FileManipulation.rewritedata(Firstcalculationpath + _timestep_ + "/" + _macrofile, _superposition)
+                    superpositionfun1 = 0
+                    superpositionfun2 = 0
+                    _superposition = 0
+            print('----------SUPERPOSITION DONE!----------')
+            if _number_of_calculations < (number_of_calculations - 1):
+                FileManipulation.cleancase(casepath)
+        for _timestep_ in timestepNamelist:
+            for _macrofile in MacroPropertiesNameList.listOutput:
+                # read the final data in Firstcalculation folder
+                #print(_macrofile)
+                _averagevalue = FileManipulation.loadData(Firstcalculationpath + _timestep_ + "/" + _macrofile, boundaryNamelist)
+                average = FileManipulation.averagedata((number_of_calculations+NumOfCompletion), _averagevalue)
+                #print('#####################Averaging Complete#####################')
+                # rewrite it into the file
+                FileManipulation.rewritedata(Firstcalculationpath + _timestep_ + "/" + _macrofile, average)
+        print('#####################Rewriting Data Complete#####################')
+        FileManipulation.cleancase(casepath)
+        print("#####################Calculations All Complete#####################")
+elif JustSuperposition == True:
+    timestepNamelist=[]
+    timestepNamelist = os.listdir(Firstcalculationpath)
+    # a 'timestepNamelist' list is created
+    # ------------------------------------------------------------------------------
+    # get boundary name list
+    with open(casepath + blockMeshfilepath, 'r') as boundarynamefile:
+        blockMeshline = boundarynamefile.readlines()
+    boundaryNamelist = []
+    _blockMeshline_counter = 0
+    for _blockMeshline in blockMeshline:
+    # if the boundary type is empty, we just neglect it because there wont be any data in the result named in this boundary type.
+        if _blockMeshline.find("type") != -1 and _blockMeshline.find("empty") == -1:
+            _blockMeshline_ = blockMeshline[_blockMeshline_counter - 2]
+            # get rid of useless strings like empty space string and \n
+            _blockMeshline_ = _blockMeshline_.strip(" \n")
+            boundaryNamelist.append(_blockMeshline_)
+            _blockMeshline_counter += 1
+        else:
+            _blockMeshline_counter += 1
+    # ------------------------------------------------------------------------------
+    print('----------PROCESSING SUPERPOSITION!----------')
+    for _timestep_ in timestepNamelist:
+        #print(_timestep_)
+        for _macrofile in MacroPropertiesNameList.listOutput:
+            _isvector = 0
+            _isscalar = 0
+            #print(_macrofile)
+            superpositionfun1 = FileManipulation.loadData(ExternalFirstcalculationpath + _timestep_ + "/" + _macrofile, boundaryNamelist,True,ExternalNumOfCompletion)
+            # ------------------------------------------------------------------------------
+            superpositionfun2 = FileManipulation.loadData(Firstcalculationpath + _timestep_ + "/" + _macrofile, boundaryNamelist,True)
+            # ------------------------------------------------------------------------------
+            _superposition = FileManipulation.superposition(superpositionfun1, superpositionfun2)
+            FileManipulation.rewritedata(Firstcalculationpath + _timestep_ + "/" + _macrofile, _superposition)
+            superpositionfun1 = 0
+            superpositionfun2 = 0
+            _superposition = 0
+    print('----------SUPERPOSITION DONE!----------')
+    # ------------------------------------------------------------------------------
+    for _timestep_ in timestepNamelist:
+        for _macrofile in MacroPropertiesNameList.listOutput:
+            # read the final data in Firstcalculation folder
+            #print(_macrofile)
+            _averagevalue = FileManipulation.loadData(Firstcalculationpath + _timestep_ + "/" + _macrofile, boundaryNamelist)
+            average = FileManipulation.averagedata((NumOfCompletion+ExternalNumOfCompletion), _averagevalue)
+            #print('#####################Averaging Complete#####################')
+            # rewrite it into the file
+            FileManipulation.rewritedata(Firstcalculationpath + _timestep_ + "/" + _macrofile, average)
+    print('#####################Rewriting Data Complete#####################')
+    FileManipulation.cleancase(casepath)
+    print("#####################Calculations All Complete#####################")
+# ------------------------------------------------------------------------------
+endtime=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+# print start time and end time so that we can evaluate the total time consumed.
+if JustSuperposition == False:
+    logging.info("The simulation started at "+starttime)
+    logging.info("The simulation ended at "+endtime)
+    # ------------------------------------------------------------------------------
