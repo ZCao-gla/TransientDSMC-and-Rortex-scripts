@@ -26,8 +26,10 @@ ALOGRITHM
 8. Divide the summed macroscopic properties by the number of ensembles.
 '''
 '''
-User Instruction
-Find the user define part below and modified this part.
+###############Instruction###############
+Find the user define part and modified it.
+#########################################
+
 Update log
 2020/5/5
 According to several tests, When the number of patches of a surface is lower than 10, the scalar or vector data will be written into ONE LINE by OpenFOAM.
