@@ -199,12 +199,14 @@ for timestepNamelist_ in timestepNamelist:
 	iii)the same to shear vector part
 	'''
 	rortex_Lines[11]=rortex_Lines[11].replace('volTensorField','volVectorField')
-	rortex_Lines[13]=rortex_Lines[13].replace('dsmcgradUMean','Rortex')
+	#Be careful with the output file Name!
+	rortex_Lines[13]=rortex_Lines[13].replace('dsmcgradUMean','Rortex')#<------
 	rortex_Lines[19]=rortex_Lines[19].replace('tensor','vector')
 	#print('rortex_Lines[13]=',rortex_Lines[13])
 	#print('rortex_Lines[13]=',rortex_Lines[13])
         shear_vector_Lines[11]=shear_vector_Lines[11].replace('volTensorField','volVectorField')
-	shear_vector_Lines[13]=shear_vector_Lines[13].replace('dsmcgradUMean','shear vector')
+	#Be careful with the output file Name!
+	shear_vector_Lines[13]=shear_vector_Lines[13].replace('dsmcgradUMean','shear vector')#<------
 	shear_vector_Lines[19]=shear_vector_Lines[19].replace('tensor','vector')
 	#print('shear_vector_Lines[13]=',shear_vector_Lines[13])
 	#-------------------------------------------------------------------
