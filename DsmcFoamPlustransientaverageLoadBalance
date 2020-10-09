@@ -30,19 +30,18 @@ User Instruction
 Find the user define part below and modified this part.
 Update log
 2020/5/5
-It has been found that when the number of patches of a surface is lower than 10, the scalar or vector data will be written into one line by OpenFOAM.
-In such curcumstances, the loadData function won't work correctly.
-Therefore, we import a dataFormatCheck function to check the data format and if the unwanted situation occurs, this function will force the data to be
-rewritten to the correct way.
+According to several tests, When the number of patches of a surface is lower than 10, the scalar or vector data will be written into ONE LINE by OpenFOAM.
+In such curcumstances, the loadData function won't work correctly to acquire the coorect scalar or vector.
+Therefore, we import a dataFormatCheck function to check the data format and if the unwanted situation occurs, this function will split the ONE LINE 
+into multiple lines for reading correctly.
 
 2020/5/16
 To avoid failure of caluclation due to the intruptions by some special circumstances, such as system-halted or power-off. 
-Two variables, CalFromBeginning and NumOfCompletion, are imported to control whether the user want to restart or continue the calculation 
+Two variables, calcInteruption and nComplete, are imported to help for continuing the simulation. 
 
 2020/6/9
-If two or more computers running the same case respectively, they can be considered as individual samples and can be combined together.
-Here "JustSuperposition" variable is imported to control such ability
-The data calculated by another computer must be kept in the directory in "FirstCalculation" folder.
+If two or more computers running the same case respectively, they can be considered as individual samples and can be combined together
+through defining externalNumComplete
 '''
 
 
@@ -140,10 +139,10 @@ class FileManipulation():
 #-----------------------------------------------------------------------------------------------
 #-----------------------------------------------------------------------------------------------
     # read data function
-    def loadData(self,fileName, boundaryNamelist,SumRecover=False,ExternalNumOfCompletion=0):
+    def loadData(self,fileName, boundaryNamelist,SumRecover=False,externalNumOfComplete=0):
         global _isvector
         global _isscalar
-        global NumOfCompletion
+        global nComplete
         '''
         The data we need to extract is always highlighted by the key word like 'internalField' and other boundary names.
         Another key word is 'List'.
@@ -229,16 +228,16 @@ class FileManipulation():
                         curline1 = list(curline3.strip("(\n)").split())
                         fltline = map(float, list(curline1))  # turn the value from string to float so we can calculate it
                         if SumRecover == True:
-                            if ExternalNumOfCompletion==0:
+                            if externalNumOfComplete==0:
                                 '''
-                                if ExternalNumOfCompletion is specified to be nonzero value, it means the user want to recover
+                                if externalNumOfComplete is specified to be nonzero value, it means the user want to recover
                                 the summation calculated by another computer.
                                 '''
-                                NumOfCompletionList=[NumOfCompletion]*3#make it a list for iterable
+                                NumOfCompletionList=[nComplete]*3#make it a list for iterable
                                 fltline = map(lambda ListX,NumY: ListX*NumY, fltline, NumOfCompletionList)
                                 dataSet[loaddatafor2count] += fltline
-                            elif ExternalNumOfCompletion>0:
-                                NumOfCompletionList=[ExternalNumOfCompletion]*3#make it a list for iterable
+                            elif externalNumOfComplete>0:
+                                NumOfCompletionList=[externalNumOfComplete]*3#make it a list for iterable
                                 fltline = map(lambda ListX,NumY: ListX*NumY, fltline, NumOfCompletionList)
                                 dataSet[loaddatafor2count] += fltline
                         elif SumRecover == False:
@@ -255,10 +254,10 @@ class FileManipulation():
                         curline3 = line[i]
                         curline3 = curline3.strip("\n")
                         if SumRecover == True:
-                            if ExternalNumOfCompletion==0:
-                                dataSet[loaddatafor2count].append(float(curline3)*NumOfCompletion)
-                            elif ExternalNumOfCompletion>0:
-                                dataSet[loaddatafor2count].append(float(curline3)*ExternalNumOfCompletion)
+                            if externalNumOfComplete==0:
+                                dataSet[loaddatafor2count].append(float(curline3)*nComplete)
+                            elif externalNumOfComplete>0:
+                                dataSet[loaddatafor2count].append(float(curline3)*externalNumOfComplete)
                         elif SumRecover == False:
                             dataSet[loaddatafor2count].append(float(curline3))
                         else:
@@ -279,12 +278,12 @@ class FileManipulation():
                     curline1 = list(curline3.strip("(\n)").split())
                     fltline = map(float, list(curline1))  # turn the value from string to float so we can calculate it
                     if SumRecover == True:
-                        if ExternalNumOfCompletion==0:
-                            NumOfCompletionList=[NumOfCompletion]*3
+                        if externalNumOfComplete==0:
+                            NumOfCompletionList=[nComplete]*3
                             fltline = map(lambda ListX,NumY: ListX*NumY, fltline, NumOfCompletionList)
                             dataSet += fltline
-                        elif ExternalNumOfCompletion>0:
-                            NumOfCompletionList=[ExternalNumOfCompletion]*3
+                        elif externalNumOfComplete>0:
+                            NumOfCompletionList=[externalNumOfComplete]*3
                             fltline = map(lambda ListX,NumY: ListX*NumY, fltline, NumOfCompletionList)
                             dataSet += fltline                        
                     elif SumRecover == False:
@@ -299,10 +298,10 @@ class FileManipulation():
                     curline3 = line[i]
                     curline3 = curline3.strip("\n")
                     if SumRecover == True:
-                        if ExternalNumOfCompletion==0:
-                            dataSet.append(float(curline3)*NumOfCompletion)
-                        elif ExternalNumOfCompletion>0:
-                            dataSet.append(float(curline3)*ExternalNumOfCompletion)
+                        if externalNumOfComplete==0:
+                            dataSet.append(float(curline3)*nComplete)
+                        elif externalNumOfComplete>0:
+                            dataSet.append(float(curline3)*externalNumOfComplete)
                     elif SumRecover == False:
                         dataSet.append(float(curline3))
                     else:
@@ -399,7 +398,7 @@ class FileManipulation():
 
 # -------------------------------------------------------------------
 # calculate average macroscopic peoperties
-    def averagedata(self,number_of_calculations, value):
+    def averagedata(self,nCalculations, value):
         global DatalineIndex
         if len(DatalineIndex) / 2 > 1:
             length = len(value)
@@ -409,14 +408,14 @@ class FileManipulation():
                 averagedvalue.append(averagedvaluecell)
             for i_averagedata in range(length):
                 for cell in value[i_averagedata]:
-                    cell = cell / number_of_calculations
+                    cell = cell / nCalculations
                     # print(cell)
                     averagedvalue[i_averagedata].append(cell)
             return averagedvalue
         if len(DatalineIndex) / 2 == 1:
             averagedvalue = []
             for i_averagedata in range(len(value)):
-                averagedvalue.append(value[i_averagedata] / number_of_calculations)
+                averagedvalue.append(value[i_averagedata] / nCalculations)
             return averagedvalue
 
 
@@ -472,50 +471,51 @@ starttime=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 ######################BEGINNING OF USER DEFINE PART###############################
 # ------------------------------------------------------------------------------
 caseName = "Kn0.025_Ma1.6_SWD_2000times/" #keep the "/" here
+#for example, pressure as named as "p_N2" in OpenFOAM
 gastype='N2'
 # ------------------------------------------------------------------------------
 #the working directory
-Mpath = "/home/kevin/OpenFOAM/kevin-2.4.0-MNF/"#keep the "/" here
+path = "/home/XXXXXXX/OpenFOAM/kevin-2.4.0-MNF/"#keep the "/" here
 #the directory where new data computed by another computer is saved
-ExternalDataPath = "/home/kevin/OpenFOAM/kevin-2.4.0-MNF/Kn0.025_Ma1.6_SWD/"#keep the "/" here
+externalDataPath = "/home/XXXXXX/OpenFOAM/kevin-2.4.0-MNF/XXXXXXXXXX/"#keep the "/" here
 # ------------------------------------------------------------------------------
 # Important! number of calculations needed.
-number_of_calculations = 5
+nCalculations = 0
 #How many times it has been calculated?
-NumOfCompletion = 2000
+nComplete = 2000
 #Is the calculation interupted?
 # ------------------------------------------------------------------------------
-CalInteruption = False
-#CalInteruption = True
+calcInteruption = False
+#calcInteruption = True
 # ------------------------------------------------------------------------------
-#Just do superposition for two individual data? If this number is nonzero, then number_of_calculations will not work, you can leave it with any number you want.
-ExternalNumOfCompletion=0
+#Just do superposition for two individual data? If this number is nonzero, then nCalculations will not work, you can leave it with any number you want.
+externalNumOfComplete=0
 # ------------------------------------------------------------------------------
 ###########################END OF USER DEFINE PART###############################
 # ------------------------------------------------------------------------------
 blockMeshfilepath = "constant/polyMesh/blockMeshDict"
 controlDictpath = 'system/controlDict'
 # the case path
-casepath = Mpath + caseName
+casepath = path + caseName
 Firstcalculationpath = casepath + 'FirstCalculation/'
 # check: start the calculation from the beginning? 
-if NumOfCompletion > 0:
+if nComplete > 0:
     CalFromBeginning = False
-elif NumOfCompletion == 0:
+elif nComplete == 0:
     CalFromBeginning = True
 else:
-    print("Error! Illegal value of NumOfCompletion has been detected!")
+    print("Error! Illegal value of nComplete has been detected!")
     sys.exit(0)
 # ------------------------------------------------------------------------------
-if ExternalNumOfCompletion==0:
+if externalNumOfComplete==0:
     JustSuperposition = False
-elif ExternalNumOfCompletion>0:
+elif externalNumOfComplete>0:
     JustSuperposition = True
 else:
-    print("Error! Illegal value of ExternalNumOfCompletion has been detected!")
+    print("Error! Illegal value of externalNumOfComplete has been detected!")
     sys.exit(0)
 # ------------------------------------------------------------------------------
-ExternalFirstcalculationpath = ExternalDataPath + 'FirstCalculation/'
+ExternalFirstcalculationpath = externalDataPath + 'FirstCalculation/'
 #the number of completion in computer starts from 0
 #######################initialization of class##################################
 # The list of the names of generated macroscopic properties
@@ -606,9 +606,9 @@ if JustSuperposition == False:
     # clear all the rubbish files
     # ------------------------------------------------------------------------------
     if CalFromBeginning == True:
-        print('##########The number of loop calculations is: %d#############' % (number_of_calculations))
+        print('##########The number of loop calculations is: %d#############' % (nCalculations))
         # ------------------------------------------------------------------------------
-        for _number_of_calculations in range(number_of_calculations):
+        for _number_of_calculations in range(nCalculations):
             #print('Preparing!')
             #time.sleep(1)
             # remove unnecessary log files
@@ -636,7 +636,7 @@ if JustSuperposition == False:
                         superpositionfun2 = 0
                         _superposition = 0
                 print('----------SUPERPOSITION DONE!----------')
-                if _number_of_calculations < (number_of_calculations - 1):
+                if _number_of_calculations < (nCalculations - 1):
                     FileManipulation.cleancase(casepath)
                 # break
             else:
@@ -684,7 +684,7 @@ if JustSuperposition == False:
                 # read the final data in Firstcalculation folder
                 #print(_macrofile)
                 _averagevalue = FileManipulation.loadData(Firstcalculationpath + _timestep_ + "/" + _macrofile, boundaryNamelist)
-                average = FileManipulation.averagedata(number_of_calculations, _averagevalue)
+                average = FileManipulation.averagedata(nCalculations, _averagevalue)
                 #print('#####################Averaging Complete#####################')
                 # rewrite it into the file
                 FileManipulation.rewritedata(Firstcalculationpath + _timestep_ + "/" + _macrofile, average)
@@ -693,7 +693,7 @@ if JustSuperposition == False:
         print("#####################Calculations All Complete#####################")
         # ------------------------------------------------------------------------------
     else:
-        print('##########Continue the Calculation! The number of loop calculations is: %d#############' % (number_of_calculations))
+        print('##########Continue the Calculation! The number of loop calculations is: %d#############' % (nCalculations))
         #check the time step name list and macroscopic properties name list
         # the folders list in the case folder
         timestepNamelist=[]
@@ -703,14 +703,14 @@ if JustSuperposition == False:
         # a 'timestepNamelist' list is created
         # ------------------------------------------------------------------------------
         #remove unnecessary log files
-        for _number_of_calculations in range(number_of_calculations):
+        for _number_of_calculations in range(nCalculations):
             #print('Preparing!')
             #time.sleep(1)
             # remove unnecessary log files
             if _number_of_calculations > 0:
-                os.system("rm log.%d" % (_number_of_calculations + NumOfCompletion-1))
-            print('#####################Processsing the %d time(s) Calculation#####################' % (_number_of_calculations+ NumOfCompletion + 1))
-            os.system("./loadbalance > log.%d" % (_number_of_calculations+NumOfCompletion))
+                os.system("rm log.%d" % (_number_of_calculations + nComplete-1))
+            print('#####################Processsing the %d time(s) Calculation#####################' % (_number_of_calculations+ nComplete + 1))
+            os.system("./loadbalance > log.%d" % (_number_of_calculations+nComplete))
             # superposition of data
             #time.sleep(1)
             print('----------PROCESSING SUPERPOSITION!----------')
@@ -723,7 +723,7 @@ if JustSuperposition == False:
                     superpositionfun1 = FileManipulation.loadData(casepath + _timestep_ + "/" + _macrofile, boundaryNamelist)
                     # ------------------------------------------------------------------------------
                     #recover the superposition
-                    if _number_of_calculations == 0 and CalInteruption == False:
+                    if _number_of_calculations == 0 and calcInteruption == False:
                         superpositionfun2 = FileManipulation.loadData(Firstcalculationpath + _timestep_ + "/" + _macrofile, boundaryNamelist,True)
                     else:
                         superpositionfun2 = FileManipulation.loadData(Firstcalculationpath + _timestep_ + "/" + _macrofile, boundaryNamelist)
@@ -734,14 +734,14 @@ if JustSuperposition == False:
                     superpositionfun2 = 0
                     _superposition = 0
             print('----------SUPERPOSITION DONE!----------')
-            if _number_of_calculations < (number_of_calculations - 1):
+            if _number_of_calculations < (nCalculations - 1):
                 FileManipulation.cleancase(casepath)
         for _timestep_ in timestepNamelist:
             for _macrofile in MacroPropertiesNameList.listOutput:
                 # read the final data in Firstcalculation folder
                 #print(_macrofile)
                 _averagevalue = FileManipulation.loadData(Firstcalculationpath + _timestep_ + "/" + _macrofile, boundaryNamelist)
-                average = FileManipulation.averagedata((number_of_calculations+NumOfCompletion), _averagevalue)
+                average = FileManipulation.averagedata((nCalculations+nComplete), _averagevalue)
                 #print('#####################Averaging Complete#####################')
                 # rewrite it into the file
                 FileManipulation.rewritedata(Firstcalculationpath + _timestep_ + "/" + _macrofile, average)
@@ -776,7 +776,7 @@ elif JustSuperposition == True:
             _isvector = 0
             _isscalar = 0
             #print(_macrofile)
-            superpositionfun1 = FileManipulation.loadData(ExternalFirstcalculationpath + _timestep_ + "/" + _macrofile, boundaryNamelist,True,ExternalNumOfCompletion)
+            superpositionfun1 = FileManipulation.loadData(ExternalFirstcalculationpath + _timestep_ + "/" + _macrofile, boundaryNamelist,True,externalNumOfComplete)
             # ------------------------------------------------------------------------------
             superpositionfun2 = FileManipulation.loadData(Firstcalculationpath + _timestep_ + "/" + _macrofile, boundaryNamelist,True)
             # ------------------------------------------------------------------------------
@@ -792,7 +792,7 @@ elif JustSuperposition == True:
             # read the final data in Firstcalculation folder
             #print(_macrofile)
             _averagevalue = FileManipulation.loadData(Firstcalculationpath + _timestep_ + "/" + _macrofile, boundaryNamelist)
-            average = FileManipulation.averagedata((NumOfCompletion+ExternalNumOfCompletion), _averagevalue)
+            average = FileManipulation.averagedata((nComplete+externalNumOfComplete), _averagevalue)
             #print('#####################Averaging Complete#####################')
             # rewrite it into the file
             FileManipulation.rewritedata(Firstcalculationpath + _timestep_ + "/" + _macrofile, average)
