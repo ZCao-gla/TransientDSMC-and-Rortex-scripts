@@ -424,7 +424,7 @@ class FileManipulation():
 # -------------------------------------------------------------------
 # clean the case
     def cleancase(self,directory):
-        directoryReserved = ['system', 'constant', 'log', 'DsmcFoamPlustransientaverage', 'postProcessing', 'FirstCalculation','loadbalance','.log','boundary','.msh']
+        directoryReserved = ['system', 'constant', 'log', 'DsmcFoamPlusTransientAverageLoadBalance', 'postProcessing', 'FirstCalculation','loadbalance','.log','boundary','.msh']
         for dirName in os.listdir(directory):
             i = 0
             ii = 0
@@ -445,9 +445,16 @@ class MacroProperties:
     def __init__(self, gastype):
         Namelist_raw = ['p','overallT','UMean','rhoM']
         self.listOutput =[]
-        self.gastype=str(gastype)
-        for i in Namelist_raw:
-            self.listOutput.append(i+'_'+gastype)
+        if len(gastype)==1:
+            #self.gastype=str(gastype)
+            for i in Namelist_raw:
+                self.listOutput.append(i+'_'+gastype[0])
+        elif len(gastype)>1:
+            for gastypeI in range(len(gastype)):
+                #self.gastype=str(gastypeI)
+                for i in Namelist_raw:
+                    self.listOutput.append(i+'_'+gastype[gastypeI])
+	#print(self.listOutput)
 ###################################################################################
 ################################FUNCTION DEFINE####################################
 ###################################################################################
@@ -472,9 +479,9 @@ starttime=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 # ------------------------------------------------------------------------------
 ######################BEGINNING OF USER DEFINE PART###############################
 # ------------------------------------------------------------------------------
-caseName = "Kn0.025_Ma1.6_SWD_2000times/" #keep the "/" here
+caseName = "XXXXXXX/" #keep the "/" here
 #for example, pressure as named as "p_N2" in OpenFOAM
-gastype='N2'
+gastype=['N2'] #provide a list of string
 # ------------------------------------------------------------------------------
 #the working directory
 path = "/home/XXXXXXX/OpenFOAM/kevin-2.4.0-MNF/"#keep the "/" here
