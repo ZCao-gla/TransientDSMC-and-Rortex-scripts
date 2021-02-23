@@ -567,7 +567,7 @@ if JustSuperposition == False:
                 continue
             elif dirName.find('system') != -1:
                 continue
-            elif dirName.find('DsmcFoamPlustransientaverage') != -1:
+            elif dirName.find('DsmcFoamPlusTransientAverageLoadBalance') != -1:
                 continue
             elif dirName.find('loadbalance') != -1:
                 continue
@@ -588,7 +588,7 @@ if JustSuperposition == False:
                 continue
             elif dirName.find('system') != -1:
                 continue
-            elif dirName.find('DsmcFoamPlustransientaverage') != -1:
+            elif dirName.find('DsmcFoamPlusTransientAverageLoadBalance') != -1:
                 continue
             elif dirName.find('FirstCalculation') != -1: #here is the difference
                 continue
