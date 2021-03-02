@@ -473,7 +473,7 @@ def isNum(x):
 print("###################################################################################")
 print("###############################Start Simulation####################################")
 print("###################################################################################")
-logging.basicConfig(filename="time.log",level=logging.INFO)
+logging.basicConfig(filename="Time.log",level=logging.INFO)
 starttime=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 # some print commmands are used for debugging.
 # ------------------------------------------------------------------------------
@@ -578,7 +578,7 @@ if JustSuperposition == False:
                 continue
             elif dirName.find('loadbalance') != -1:
                 continue
-            elif dirName.find('.log') !=-1:
+            elif dirName.find('.log') !=-1 and dirName.find('Time') == -1:
                 continue
             elif dirName.find('boundary') !=-1:
                 continue
@@ -812,6 +812,7 @@ elif JustSuperposition == True:
 endtime=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 # print start time and end time so that we can evaluate the total time consumed.
 if JustSuperposition == False:
-    logging.info("The simulation started at "+starttime)
-    logging.info("The simulation ended at "+endtime)
+    logging.info("The total number of samples are "+nCalculations)
+    logging.info("This(These) "+nCalculations+" simulation(s) started at "+starttime)
+    logging.info("This(These) "+nCalculations+" simulation(s) ended at "+endtime)
     # ------------------------------------------------------------------------------
