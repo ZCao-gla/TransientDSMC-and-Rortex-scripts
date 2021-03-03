@@ -812,7 +812,7 @@ elif JustSuperposition == True:
 endtime=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 # print start time and end time so that we can evaluate the total time consumed.
 if JustSuperposition == False:
-    logging.info("The total number of samples are "+nCalculations)
-    logging.info("This(These) "+nCalculations+" simulation(s) started at "+starttime)
-    logging.info("This(These) "+nCalculations+" simulation(s) ended at "+endtime)
+    logging.info("The total number of samples are "+str(nCalculations))
+    logging.info("This(These) "+nCalculations+" simulation(s) started at "+ str(starttime))
+    logging.info("This(These) "+nCalculations+" simulation(s) ended at "+ str(endtime))
     # ------------------------------------------------------------------------------
