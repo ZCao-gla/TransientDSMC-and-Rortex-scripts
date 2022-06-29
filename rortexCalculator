@@ -49,15 +49,16 @@ for timestepNamelist_ in timestepNamelist:
 	    rortex_Lines=velocityGradientFile_rortex_w.readlines()
 	#-------------------------------------------------------------------
 	#determine the number of cells, which is the number of lines of the tensor
-	NumOfCells=Lines[20].strip(" \n") # this line is used for OpenFOAM-2.4.0-MNF
-	#NumOfCells=Lines[21].strip(" \n") #this line is used for OpenFOAM-v2112 and upper version.
+	lineId_numCells=20 # this line is used for OpenFOAM-2.4.0-MNF
+	#lineId_numCells=21 #this line is used for OpenFOAM-v2112 and upper version.
+	NumOfCells=Lines[lineId_numCells].strip(" \n") 
 	#print('NumOfCells=',NumOfCells)
 	NumOfCells=int(NumOfCells)
 	#print ("Number of cells is ", NumOfCells)
 	#-------------------------------------------------------------------
 	#loop in each point
 	print("t="+timestepNamelist_)
-	for i in range(22,(22+NumOfCells)):
+	for i in range((lineId_numCells+2),(lineId_numCells+2+NumOfCells)):
 		gradientTensor_component = []
 		datalist = Lines[i].strip("( )\n").split()#datalist: the matrix of velocity gradient of each point
 		for datalistitem in datalist:
