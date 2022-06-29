@@ -20,7 +20,7 @@ def isNum(x):
     except ValueError:
         return False
 #-------------------------------------------------------------------
-Mpath="g:/OpenFOAM/Simulation Results/plumeDustCase//"
+Mpath="g:/OpenFOAM/Simulation Results/plumeDustCase//"#<------
 AllfileName = os.listdir(Mpath)
 keyword = 'e-'
 timestepNamelist = []
